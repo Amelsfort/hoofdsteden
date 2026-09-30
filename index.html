@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hoofdsteden VR – Noord-Europa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a1838;
+    --fg: #f3f7ff;
+    --muted: #b8c7ea;
+    --accent: #ffcf40;
+    --accent-ink: #3a2200;
+    --chip: rgba(8, 20, 52, 0.78);
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #060f26; --chip: rgba(4, 12, 34, 0.82); }
+  }
+  :root[data-theme="dark"] { --bg: #060f26; --chip: rgba(4, 12, 34, 0.82); }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
+  *, *::before, *::after { box-sizing: inherit; }
+  body {
+    height: 100%; margin: 0; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: "Nunito", "Trebuchet MS", system-ui, sans-serif;
+  }
+  #app { position: relative; width: 100%; height: 100%; }
+  #app canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #hud {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 14px 16px 18px;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    pointer-events: none;
+  }
+  #vr {
+    pointer-events: auto;
+    font: 900 1.15rem/1 "Nunito", "Trebuchet MS", system-ui, sans-serif;
+    color: var(--accent-ink); background: var(--accent);
+    border: 0; border-radius: 999px; padding: 0.9em 1.6em;
+    box-shadow: 0 4px 0 #b77900; cursor: pointer;
+  }
+  #vr:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+  #vr[hidden] { display: none; }
+  #note {
+    pointer-events: auto; margin: 0; max-width: 34rem; text-align: center;
+    font-size: 0.95rem; line-height: 1.4; color: var(--muted);
+    background: var(--chip); padding: 0.5em 0.9em; border-radius: 12px;
+  }
+  #hudRow { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="hud">
+    <div id="hudRow">
+      <button id="vr" hidden>🥽 Speel in VR</button>
+    </div>
+    <p id="note">Laden…</p>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* =====================================================================
+   EZELSBRUGGETJES AANPASSEN
+   Optie 1 (makkelijkst): Google Sheet.
+     - Kolom A: land (bijv. Noorwegen), kolom B: ezelsbruggetje.
+     - Bestand > Delen > Publiceren op internet > kies het blad > CSV > Publiceren.
+     - Plak die link hieronder bij SHEET_CSV_URL.
+     Daarna pas je alles aan in de Sheet; de site hoeft niet meer aangepast.
+   Optie 2: vul ze hieronder in bij HINTS (wordt gebruikt als er geen Sheet is,
+     of als de Sheet niet geladen kan worden).
+   Een leeg ezelsbruggetje = het spel toont alleen "land → hoofdstad".
+   ===================================================================== */
+const SHEET_CSV_URL = '';
+const HINTS = {
+  'Noorwegen':  '',
+  'Zweden':     '',
+  'Denemarken': '',
+  'IJsland':    '',
+  'Finland':    '',
+  'Estland':    '',
+  'Letland':    '',
+  'Litouwen':   ''
+};
+</script>
+<script>
+(async function () {
+  try {
+    await Promise.all([
+      document.fonts.load('900 64px Nunito'),
+      document.fonts.load('800 48px Nunito'),
+      document.fonts.load('700 40px Nunito')
+    ]);
+  } catch (e) {}
+  start();
+})();
+
+function start() {
+  const FONT = '"Nunito", "Trebuchet MS", system-ui, sans-serif';
+  const DATA = [
+    { land: 'Noorwegen',  stad: 'Oslo',       flag: 'no' },
+    { land: 'Zweden',     stad: 'Stockholm',  flag: 'se' },
+    { land: 'Denemarken', stad: 'Kopenhagen', flag: 'dk' },
+    { land: 'IJsland',    stad: 'Reykjavik',  flag: 'is' },
+    { land: 'Finland',    stad: 'Helsinki',   flag: 'fi' },
+    { land: 'Estland',    stad: 'Tallinn',    flag: 'ee' },
+    { land: 'Letland',    stad: 'Riga',       flag: 'lv' },
+    { land: 'Litouwen',   stad: 'Vilnius',    flag: 'lt' }
+  ];
+
+  const app = document.getElementById('app');
+  const vrBtn = document.getElementById('vr');
+  const note = document.getElementById('note');
+
+  // ---------- renderer / scene ----------
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.xr.enabled = true;
+  renderer.xr.setReferenceSpaceType('local-floor');
+  app.insertBefore(renderer.domElement, app.firstChild);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0d1f4a, 18, 60);
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 200);
+
+  scene.add(new THREE.HemisphereLight(0xc4d8ff, 0x2a3656, 0.95));
+  const sun = new THREE.DirectionalLight(0xe8f0ff, 0.55);
+  sun.position.set(4, 10, 2);
+  scene.add(sun);
+
+  // sky
+  (function () {
+    const c = document.createElement('canvas'); c.width = 8; c.height = 256;
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, '#040a22'); g.addColorStop(0.45, '#0c1d4c'); g.addColorStop(0.5, '#1a3a78'); g.addColorStop(1, '#1a3a78');
+    x.fillStyle = g; x.fillRect(0, 0, 8, 256);
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(80, 32, 16),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), side: THREE.BackSide, fog: false }));
+    scene.add(sky);
+  })();
+
+  // stars
+  (function () {
+    const n = 700, p = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+      const th = Math.random() * Math.PI * 2, ph = Math.random() * Math.PI * 0.45;
+      p[i*3] = 70 * Math.sin(ph) * Math.cos(th); p[i*3+1] = 70 * Math.cos(ph) + 2; p[i*3+2] = 70 * Math.sin(ph) * Math.sin(th);
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+    scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, fog: false })));
+  })();
+
+  // aurora ribbons
+  const auroras = [];
+  (function () {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 0, 64);
+    g.addColorStop(0, 'rgba(120,90,255,0)'); g.addColorStop(0.35, 'rgba(110,140,255,0.5)');
+    g.addColorStop(0.7, 'rgba(80,255,170,0.95)'); g.addColorStop(1, 'rgba(80,255,170,0)');
+    x.fillStyle = g; x.fillRect(0, 0, 256, 64);
+    x.globalCompositeOperation = 'destination-in';
+    const h = x.createLinearGradient(0, 0, 256, 0);
+    h.addColorStop(0, 'rgba(0,0,0,0)'); h.addColorStop(0.2, 'rgba(0,0,0,1)'); h.addColorStop(0.8, 'rgba(0,0,0,1)'); h.addColorStop(1, 'rgba(0,0,0,0)');
+    x.fillStyle = h; x.fillRect(0, 0, 256, 64);
+    const tex = new THREE.CanvasTexture(c);
+    [[0, 17, -34, 0], [-30, 20, -12, Math.PI / 2.6], [28, 19, -16, -Math.PI / 2.8]].forEach(([px, py, pz, ry], i) => {
+      const geo = new THREE.PlaneGeometry(50, 12, 60, 1);
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+      m.position.set(px, py, pz); m.rotation.y = ry;
+      m.userData.base = geo.attributes.position.array.slice(); m.userData.phase = i * 2.1;
+      scene.add(m); auroras.push(m);
+    });
+  })();
+
+  // snowy ground + pines
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(60, 64), new THREE.MeshLambertMaterial({ color: 0xe6eefa }));
+  ground.rotation.x = -Math.PI / 2; scene.add(ground);
+  (function () {
+    const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5a3b24 });
+    const leafMat = new THREE.MeshLambertMaterial({ color: 0x1f5a45 });
+    const snowMat = new THREE.MeshLambertMaterial({ color: 0xf4f8ff });
+    for (let i = 0; i < 46; i++) {
+      const a = Math.random() * Math.PI * 2, r = 7 + Math.random() * 22, s = 0.8 + Math.random() * 1.3;
+      const t = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.1 * s, 0.13 * s, 0.6 * s, 6), trunkMat);
+      trunk.position.y = 0.3 * s; t.add(trunk);
+      for (let k = 0; k < 3; k++) {
+        const cone = new THREE.Mesh(new THREE.ConeGeometry((0.9 - k * 0.22) * s, 1.1 * s, 8), leafMat);
+        cone.position.y = (0.9 + k * 0.62) * s; t.add(cone);
+      }
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(0.28 * s, 0.35 * s, 8), snowMat);
+      cap.position.y = 2.4 * s; t.add(cap);
+      t.position.set(Math.cos(a) * r, 0, Math.sin(a) * r); t.rotation.y = Math.random() * 6;
+      scene.add(t);
+    }
+  })();
+
+  // snowfall
+  const SNOW = 500;
+  const snowPos = new Float32Array(SNOW * 3);
+  for (let i = 0; i < SNOW; i++) { snowPos[i*3] = (Math.random() - 0.5) * 30; snowPos[i*3+1] = Math.random() * 12; snowPos[i*3+2] = (Math.random() - 0.5) * 30; }
+  const snowGeo = new THREE.BufferGeometry(); snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+  scene.add(new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.05, transparent: true, opacity: 0.85 })));
+
+  // ---------- canvas helpers ----------
+  function rr(ctx, x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function fit(ctx, text, maxW, size, weight) {
+    let s = size;
+    do { ctx.font = `${weight} ${s}px ${FONT}`; if (ctx.measureText(text).width <= maxW) break; s -= 2; } while (s > 14);
+    return s;
+  }
+  function wrap(ctx, text, maxW) {
+    const words = text.split(' '), lines = []; let line = '';
+    words.forEach(w => { const t = line ? line + ' ' + w : w; if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t; });
+    if (line) lines.push(line); return lines;
+  }
+  function drawFlag(ctx, code, x, y, w, h) {
+    ctx.save();
+    rr(ctx, x, y, w, h, Math.min(w, h) * 0.08); ctx.clip();
+    const nordic = (bg, c1, t1, c2, t2) => {
+      ctx.fillStyle = bg; ctx.fillRect(x, y, w, h);
+      const cx = x + w * 0.37, cy = y + h / 2;
+      ctx.fillStyle = c1; ctx.fillRect(cx - h * t1 / 2, y, h * t1, h); ctx.fillRect(x, cy - h * t1 / 2, w, h * t1);
+      if (c2) { ctx.fillStyle = c2; ctx.fillRect(cx - h * t2 / 2, y, h * t2, h); ctx.fillRect(x, cy - h * t2 / 2, w, h * t2); }
+    };
+    const stripes = (cols, parts) => {
+      const tot = parts.reduce((a, b) => a + b, 0); let yy = y;
+      cols.forEach((c, i) => { const hh = h * parts[i] / tot; ctx.fillStyle = c; ctx.fillRect(x, yy, w, hh + 1); yy += hh; });
+    };
+    switch (code) {
+      case 'dk': nordic('#C8102E', '#FFFFFF', 0.2); break;
+      case 'se': nordic('#006AA7', '#FECC02', 0.2); break;
+      case 'fi': nordic('#FFFFFF', '#002F6C', 0.26); break;
+      case 'no': nordic('#BA0C2F', '#FFFFFF', 0.27, '#00205B', 0.13); break;
+      case 'is': nordic('#02529C', '#FFFFFF', 0.27, '#DC1E35', 0.13); break;
+      case 'ee': stripes(['#0072CE', '#000000', '#FFFFFF'], [1, 1, 1]); break;
+      case 'lv': stripes(['#9E3039', '#FFFFFF', '#9E3039'], [2, 1, 2]); break;
+      case 'lt': stripes(['#FDB913', '#006A44', '#C1272D'], [1, 1, 1]); break;
+    }
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = Math.max(2, w * 0.02);
+    rr(ctx, x, y, w, h, Math.min(w, h) * 0.08); ctx.stroke();
+  }
+  function starShape(ctx, cx, cy, r, filled) {
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5, rad = i % 2 ? r * 0.45 : r;
+      ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+    }
+    ctx.closePath();
+    ctx.fillStyle = filled ? '#ffcf40' : 'rgba(255,255,255,0.12)'; ctx.fill();
+    ctx.lineWidth = 5; ctx.strokeStyle = filled ? '#fff1b8' : 'rgba(255,255,255,0.35)'; ctx.stroke();
+  }
+
+  const interactive = [];
+  function canvasPlane(w, h, cw) {
+    const c = document.createElement('canvas'); c.width = cw; c.height = Math.round(cw * h / w);
+    const ctx = c.getContext('2d');
+    const tex = new THREE.CanvasTexture(c);
+    tex.minFilter = THREE.LinearFilter; tex.generateMipmaps = false;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, transparent: true, fog: false }));
+    return { mesh, c, ctx, tex, update() { tex.needsUpdate = true; } };
+  }
+  const BTN_COLORS = {
+    idle: ['#5a95ff', '#2a5bdb'], good: ['#46e591', '#16a058'], bad: ['#ff7477', '#cc2d33'],
+    dim: ['#56627f', '#394360'], start: ['#ffd65a', '#f29d0b']
+  };
+  function makeButton(w, h) {
+    const p = canvasPlane(w, h, 512);
+    p.enabled = true; p.state = 'idle'; p.mesh.userData.btn = p;
+    p.draw = function (label, state) {
+      this.state = state;
+      const { ctx, c } = this, [a, b] = BTN_COLORS[state];
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)'; rr(ctx, 8, 16, c.width - 16, c.height - 20, 42); ctx.fill();
+      const g = ctx.createLinearGradient(0, 0, 0, c.height); g.addColorStop(0, a); g.addColorStop(1, b);
+      ctx.fillStyle = g; rr(ctx, 8, 6, c.width - 16, c.height - 22, 42); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 5; ctx.stroke();
+      fit(ctx, label, c.width - 80, 68, 900);
+      ctx.fillStyle = state === 'start' ? '#3a2200' : '#ffffff';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(label, c.width / 2, (c.height - 16) / 2 + 4);
+      this.update();
+    };
+    interactive.push(p.mesh);
+    return p;
+  }
+
+  // ---------- game UI ----------
+  const ui = new THREE.Group(); scene.add(ui);
+  const Z = -2.4;
+
+  const S = canvasPlane(1.3, 0.19, 1024); S.mesh.position.set(0, 2.56, Z); ui.add(S.mesh);
+  const Q = canvasPlane(1.8, 1.0, 1024);  Q.mesh.position.set(0, 1.9, Z);  ui.add(Q.mesh);
+
+  const answerBtns = [];
+  [[-0.47, 1.2], [0.47, 1.2], [-0.47, 0.9], [0.47, 0.9]].forEach(([x, y], i) => {
+    const b = makeButton(0.86, 0.26); b.mesh.position.set(x, y, Z + 0.08); b.index = i;
+    b.onSelect = () => answer(b); ui.add(b.mesh); answerBtns.push(b);
+  });
+  const startBtn = makeButton(1.0, 0.3); startBtn.mesh.position.set(0, 1.05, Z + 0.08);
+  startBtn.onSelect = () => { sfx('click'); newGame(); }; ui.add(startBtn.mesh);
+
+  function panelBg(ctx, c, r) {
+    ctx.clearRect(0, 0, c.width, c.height);
+    ctx.fillStyle = 'rgba(8,20,52,0.9)'; rr(ctx, 6, 6, c.width - 12, c.height - 12, r); ctx.fill();
+    ctx.strokeStyle = 'rgba(160,200,255,0.6)'; ctx.lineWidth = 6; ctx.stroke();
+  }
+  function drawScore() {
+    const { ctx, c } = S; panelBg(ctx, c, 60);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
+    const txt = `⭐ ${score} punten     ✅ ${solved}/8     🔥 ${streak} op rij`;
+    fit(ctx, txt, c.width - 80, 58, 800); ctx.fillText(txt, c.width / 2, c.height / 2 + 2); S.update();
+  }
+
+  let best = 0;
+  try { best = parseInt(localStorage.getItem('hoofdsteden-best') || '0', 10) || 0; } catch (e) {}
+
+  function drawStart() {
+    const { ctx, c } = Q; panelBg(ctx, c, 44);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#ffcf40'; fit(ctx, 'Hoofdsteden', c.width - 120, 112, 900); ctx.fillText('Hoofdsteden', 512, 140);
+    ctx.fillStyle = '#ffffff'; ctx.font = `800 54px ${FONT}`; ctx.fillText('van Noord-Europa', 512, 212);
+    const fw = 96, gap = 18, x0 = (1024 - (8 * fw + 7 * gap)) / 2;
+    DATA.forEach((d, i) => drawFlag(ctx, d.flag, x0 + i * (fw + gap), 250, fw, 64));
+    ctx.fillStyle = '#dfe8ff'; ctx.font = `700 42px ${FONT}`;
+    ctx.fillText('Weet jij bij elk land de hoofdstad?', 512, 395);
+    ctx.fillStyle = '#b8c7ea'; ctx.font = `700 38px ${FONT}`;
+    ctx.fillText(best ? `Beste score: ${best} punten` : 'Wie haalt er 3 sterren?', 512, 460);
+    Q.update();
+  }
+  function drawQuestion(fb) {
+    const { ctx, c } = Q, d = DATA[cur]; panelBg(ctx, c, 44);
+    drawFlag(ctx, d.flag, 60, 58, 210, 140);
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#b8c7ea'; ctx.font = `700 46px ${FONT}`; ctx.fillText('Wat is de hoofdstad van', 312, 108);
+    ctx.fillStyle = '#ffcf40'; fit(ctx, d.land + '?', 1024 - 312 - 50, 100, 900); ctx.fillText(d.land + '?', 312, 196);
+    ctx.strokeStyle = 'rgba(160,200,255,0.3)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(60, 250); ctx.lineTo(964, 250); ctx.stroke();
+    ctx.textAlign = 'center';
+    if (!fb) {
+      ctx.fillStyle = '#dfe8ff'; ctx.font = `700 46px ${FONT}`; ctx.fillText('Kies het goede antwoord 👇', 512, 370);
+    } else {
+      ctx.fillStyle = fb.good ? '#5cf0a0' : '#ff9a9d';
+      fit(ctx, fb.title, 900, 58, 900); ctx.fillText(fb.title, 512, 325);
+      ctx.fillStyle = '#fff3c4'; ctx.font = `700 42px ${FONT}`;
+      const h = (hints[d.flag] || '').trim();
+      if (h) wrap(ctx, '💡 ' + h, 880).slice(0, 3).forEach((l, i) => ctx.fillText(l, 512, 400 + i * 52));
+      else { ctx.font = `800 54px ${FONT}`; ctx.fillText(`${d.land} → ${d.stad}`, 512, 430); }
+    }
+    Q.update();
+  }
+  function drawEnd(newBest) {
+    const { ctx, c } = Q; panelBg(ctx, c, 44);
+    const stars = firstRight === 8 ? 3 : firstRight >= 6 ? 2 : 1;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#ffcf40'; ctx.font = `900 96px ${FONT}`; ctx.fillText('Klaar! 🎉', 512, 125);
+    [362, 512, 662].forEach((x, i) => starShape(ctx, x, 215, 56, i < stars));
+    ctx.fillStyle = '#ffffff'; ctx.font = `800 52px ${FONT}`; ctx.fillText(`${firstRight} van 8 meteen goed`, 512, 345);
+    ctx.fillStyle = '#b8c7ea'; ctx.font = `700 42px ${FONT}`;
+    ctx.fillText(newBest ? `${score} punten, nieuw record! 🏆` : `${score} punten (beste: ${best})`, 512, 412);
+    ctx.fillStyle = '#dfe8ff'; ctx.font = `700 40px ${FONT}`;
+    ctx.fillText(stars === 3 ? 'Wauw, jij kent ze allemaal!' : stars === 2 ? 'Heel goed! Lukt 3 sterren ook?' : 'Goed geoefend! Nog een keer?', 512, 485);
+    Q.update();
+  }
+
+  // ---------- game logic ----------
+  let phase = 'start', queue = [], cur = -1, options = [], wrongOnce = new Set();
+  let score = 0, streak = 0, solved = 0, firstRight = 0, locked = false, waitBtn = null;
+  const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+
+  function showStart() {
+    phase = 'start';
+    answerBtns.forEach(b => b.mesh.visible = false);
+    startBtn.mesh.visible = true; startBtn.draw('Start ▶', 'start');
+    S.mesh.visible = false; drawStart();
+  }
+  function newGame() {
+    queue = shuffle(DATA.map((_, i) => i)); wrongOnce = new Set();
+    score = 0; streak = 0; solved = 0; firstRight = 0; locked = false; waitBtn = null;
+    phase = 'question'; startBtn.mesh.visible = false; S.mesh.visible = true;
+    answerBtns.forEach(b => b.mesh.visible = true);
+    nextQuestion();
+  }
+  function nextQuestion() {
+    if (!queue.length) return endGame();
+    cur = queue.shift();
+    const others = shuffle(DATA.map((_, i) => i).filter(i => i !== cur)).slice(0, 3);
+    options = shuffle([cur, ...others]);
+    answerBtns.forEach((b, i) => { b.enabled = true; b.draw(DATA[options[i]].stad, 'idle'); });
+    locked = false; waitBtn = null;
+    drawQuestion(null); drawScore();
+  }
+  function answer(btn) {
+    if (phase !== 'question') return;
+    if (waitBtn) { if (btn === waitBtn) { sfx('click'); nextQuestion(); } return; }
+    if (locked) return;
+    locked = true;
+    const opt = options[btn.index], correctBtn = answerBtns[options.indexOf(cur)];
+    if (opt === cur) {
+      const first = !wrongOnce.has(cur);
+      const gain = first ? 10 + Math.min(streak, 5) * 2 : 5;
+      score += gain; streak++; solved++; if (first) firstRight++;
+      answerBtns.forEach(b => b.draw(DATA[options[b.index]].stad, b === btn ? 'good' : 'dim'));
+      drawQuestion({ good: true, title: `Goed zo! 🎉  +${gain}` }); drawScore();
+      sfx('good'); buzz(0.5, 80); burst(btn.mesh);
+      setTimeout(nextQuestion, 1700);
+    } else {
+      streak = 0; wrongOnce.add(cur);
+      queue.splice(Math.min(2, queue.length), 0, cur); // comes back soon
+      answerBtns.forEach(b => b.draw(DATA[options[b.index]].stad, b === btn ? 'bad' : b === correctBtn ? 'good' : 'dim'));
+      drawQuestion({ good: false, title: `Het is ${DATA[cur].stad}! Kies de groene knop.` }); drawScore();
+      sfx('bad'); buzz(0.9, 160);
+      waitBtn = correctBtn; locked = false;
+    }
+  }
+  function endGame() {
+    phase = 'end';
+    let newBest = false;
+    if (score > best) { best = score; newBest = true; try { localStorage.setItem('hoofdsteden-best', String(best)); } catch (e) {} }
+    answerBtns.forEach(b => b.mesh.visible = false);
+    startBtn.mesh.visible = true; startBtn.draw('Nog een keer ▶', 'start');
+    drawEnd(newBest); drawScore();
+    sfx('win'); if (firstRight >= 6) { burst(Q.mesh); setTimeout(() => burst(Q.mesh), 300); }
+  }
+
+  // ---------- sound ----------
+  let actx = null;
+  function ensureAudio() {
+    try { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) {}
+  }
+  function tone(f, t0, dur, type, vol) {
+    if (!actx) return;
+    const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + t0;
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur + 0.05);
+  }
+  function sfx(kind) {
+    ensureAudio();
+    if (kind === 'click') tone(620, 0, 0.12, 'sine', 0.15);
+    if (kind === 'good') { tone(660, 0, 0.18, 'triangle', 0.22); tone(880, 0.1, 0.18, 'triangle', 0.22); tone(1320, 0.2, 0.3, 'triangle', 0.2); }
+    if (kind === 'bad') { tone(260, 0, 0.22, 'square', 0.07); tone(196, 0.16, 0.32, 'square', 0.07); }
+    if (kind === 'win') [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.13, 0.35, 'triangle', 0.2));
+  }
+
+  // ---------- confetti ----------
+  const parts = [];
+  const partGeo = new THREE.OctahedronGeometry(0.022);
+  const partMats = [0xffcf40, 0x46e591, 0xffffff, 0x7fb2ff, 0xff8fb1].map(c => new THREE.MeshBasicMaterial({ color: c, transparent: true, fog: false }));
+  function burst(obj) {
+    const p = new THREE.Vector3(); obj.getWorldPosition(p);
+    for (let i = 0; i < 36; i++) {
+      const m = new THREE.Mesh(partGeo, partMats[i % partMats.length].clone());
+      m.position.copy(p);
+      m.userData.v = new THREE.Vector3((Math.random() - 0.5) * 2.2, Math.random() * 2 + 0.6, (Math.random() - 0.3) * 1.4);
+      m.userData.life = 1.2; scene.add(m); parts.push(m);
+    }
+  }
+
+  // ---------- input ----------
+  const raycaster = new THREE.Raycaster();
+  const tmpM = new THREE.Matrix4(), tmpV = new THREE.Vector3(), tmpD = new THREE.Vector3();
+  function hitFromRay() {
+    const list = interactive.filter(m => m.visible);
+    const hits = raycaster.intersectObjects(list, false);
+    return hits.length ? hits[0] : null;
+  }
+  function selectHit(hit) {
+    if (!hit) return;
+    const b = hit.object.userData.btn;
+    if (b && b.enabled && b.onSelect) b.onSelect();
+  }
+
+  const controllers = [];
+  let lastSource = null;
+  for (let i = 0; i < 2; i++) {
+    const c = renderer.xr.getController(i);
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]);
+    const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: 0x9fd3ff, transparent: true, opacity: 0.8 }));
+    line.scale.z = 4; c.add(line);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.015, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }));
+    dot.visible = false; scene.add(dot);
+    c.userData = { line, dot, src: null };
+    c.addEventListener('connected', e => { c.userData.src = e.data; });
+    c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
+    c.addEventListener('select', () => {
+      ensureAudio(); lastSource = c.userData.src;
+      rayFromController(c); selectHit(hitFromRay());
+    });
+    scene.add(c); controllers.push(c);
+
+    const grip = renderer.xr.getControllerGrip(i);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.03, 0.12), new THREE.MeshLambertMaterial({ color: 0xdfe8ff }));
+    body.position.z = 0.02; grip.add(body); scene.add(grip);
+  }
+  function rayFromController(c) {
+    tmpM.identity().extractRotation(c.matrixWorld);
+    raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tmpM);
+  }
+  function buzz(intensity, ms) {
+    try { const h = lastSource && lastSource.gamepad && lastSource.gamepad.hapticActuators; if (h && h[0]) h[0].pulse(intensity, ms); } catch (e) {}
+  }
+
+  const mouse = new THREE.Vector2(); let mouseIn = false;
+  function setMouse(e) {
+    const r = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1; mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1; mouseIn = true;
+  }
+  renderer.domElement.addEventListener('pointermove', setMouse);
+  renderer.domElement.addEventListener('pointerleave', () => { mouseIn = false; });
+  renderer.domElement.addEventListener('pointerdown', e => {
+    if (renderer.xr.isPresenting) return;
+    ensureAudio(); setMouse(e); raycaster.setFromCamera(mouse, camera); selectHit(hitFromRay());
+  });
+
+  // ---------- VR session ----------
+  let session = null, needsPlace = false;
+  async function setupVR() {
+    let ok = false;
+    try { ok = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')); } catch (e) {}
+    if (ok) {
+      vrBtn.hidden = false;
+      note.textContent = 'Zet de bril op en druk op "Speel in VR". Richt de straal op een antwoord en druk op de trekker.';
+    } else {
+      note.textContent = 'Je kunt hier spelen met muis of vinger. Open deze pagina in de browser van de Meta Quest om in VR te spelen.';
+    }
+  }
+  vrBtn.addEventListener('click', async () => {
+    ensureAudio();
+    if (session) { session.end(); return; }
+    try {
+      const s = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
+      s.addEventListener('end', () => { session = null; vrBtn.textContent = '🥽 Speel in VR'; ui.position.set(0, 0, 0); ui.rotation.set(0, 0, 0); resize(); });
+      await renderer.xr.setSession(s);
+      session = s; needsPlace = true; vrBtn.textContent = 'Stop VR';
+    } catch (e) {
+      note.textContent = 'VR start niet binnen deze ingesloten pagina. Open het spel los via de VR-link op de site en probeer opnieuw.';
+    }
+  });
+
+  // ---------- layout / loop ----------
+  function resize() {
+    const w = app.clientWidth, h = app.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    const a = camera.aspect;
+    camera.position.set(0, 1.7, a < 1.1 ? 0.9 + (1.1 / a - 1) * 2.6 : 0.9);
+    camera.lookAt(0, 1.72, Z);
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', () => { if (!renderer.xr.isPresenting) resize(); });
+  resize();
+
+  const clock = new THREE.Clock();
+  renderer.setAnimationLoop(() => {
+    const dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+
+    if (renderer.xr.isPresenting && needsPlace) {
+      const xc = renderer.xr.getCamera(camera);
+      xc.getWorldPosition(tmpV);
+      if (tmpV.y > 0.3) {
+        xc.getWorldDirection(tmpD);
+        ui.rotation.y = Math.atan2(-tmpD.x, -tmpD.z);
+        ui.position.set(tmpV.x, Math.max(-0.7, Math.min(0.2, tmpV.y - 1.6)), tmpV.z);
+        needsPlace = false;
+      }
+    }
+
+    // hover
+    const hovered = new Set();
+    if (renderer.xr.isPresenting) {
+      controllers.forEach(c => {
+        const { line, dot, src } = c.userData;
+        if (!src) { line.visible = false; return; }
+        line.visible = true;
+        rayFromController(c);
+        const hit = hitFromRay();
+        if (hit) { hovered.add(hit.object); line.scale.z = hit.distance; dot.position.copy(hit.point); dot.visible = true; }
+        else { line.scale.z = 4; dot.visible = false; }
+      });
+    } else if (mouseIn) {
+      raycaster.setFromCamera(mouse, camera);
+      const hit = hitFromRay();
+      if (hit) hovered.add(hit.object);
+      renderer.domElement.style.cursor = hit ? 'pointer' : 'default';
+    }
+    interactive.forEach(m => {
+      const b = m.userData.btn;
+      let target = hovered.has(m) && b.state !== 'dim' && !locked ? 1.07 : 1;
+      if (b === waitBtn) target = 1.06 + Math.sin(t * 7) * 0.04;
+      const s = m.scale.x + (target - m.scale.x) * Math.min(1, dt * 14);
+      m.scale.set(s, s, 1);
+    });
+
+    // confetti
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const p = parts[i], v = p.userData.v;
+      v.y -= 3.2 * dt; p.position.addScaledVector(v, dt);
+      p.rotation.x += dt * 6; p.rotation.y += dt * 4;
+      p.userData.life -= dt; p.material.opacity = Math.max(0, p.userData.life / 1.2);
+      if (p.userData.life <= 0) { scene.remove(p); p.material.dispose(); parts.splice(i, 1); }
+    }
+
+    // snow
+    const sp = snowGeo.attributes.position.array;
+    for (let i = 0; i < SNOW; i++) {
+      sp[i*3+1] -= dt * (0.35 + (i % 7) * 0.05);
+      sp[i*3] += Math.sin(t * 0.8 + i) * dt * 0.08;
+      if (sp[i*3+1] < 0) sp[i*3+1] = 12;
+    }
+    snowGeo.attributes.position.needsUpdate = true;
+
+    // aurora wave
+    auroras.forEach(m => {
+      const pos = m.geometry.attributes.position, base = m.userData.base;
+      for (let i = 0; i < pos.count; i++) {
+        const x = base[i*3];
+        pos.array[i*3+2] = Math.sin(x * 0.14 + t * 0.5 + m.userData.phase) * 3 + Math.sin(x * 0.05 + t * 0.2) * 2;
+      }
+      pos.needsUpdate = true;
+      m.material.opacity = 0.65 + Math.sin(t * 0.6 + m.userData.phase) * 0.25;
+    });
+
+    renderer.render(scene, camera);
+  });
+
+  // ---------- hints: inline config + optional Google Sheet ----------
+  const hints = {};
+  const byLand = {};
+  DATA.forEach(d => { byLand[d.land.toLowerCase()] = d.flag; });
+  function applyHints(map) {
+    Object.keys(map).forEach(k => {
+      const f = byLand[String(k).trim().toLowerCase()];
+      if (f) hints[f] = String(map[k] || '').trim().slice(0, 110);
+    });
+  }
+  function parseCSV(text) {
+    const rows = []; let row = [], cell = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
+        else cell += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ',') { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && text[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+  applyHints(typeof HINTS === 'object' && HINTS ? HINTS : {});
+  if (typeof SHEET_CSV_URL === 'string' && SHEET_CSV_URL.trim()) {
+    fetch(SHEET_CSV_URL.trim(), { cache: 'no-store' })
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
+      .then(t => { const m = {}; parseCSV(t).forEach(r => { if (r[0]) m[r[0]] = r[1] || ''; }); applyHints(m); })
+      .catch(() => {});
+  }
+
+  showStart();
+  setupVR();
+}
+</script>
+</body>
+</html>
