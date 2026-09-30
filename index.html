@@ -608,7 +608,7 @@ function start() {
     }
   }
   function endGame() {
-    logEvent('spel-klaar', firstRight + '/8');
+    logEvent('spel-klaar', firstRight + '/' + total);
     phase = 'end';
     let newBest = false;
     if (score > best) { best = score; newBest = true; try { localStorage.setItem('hoofdsteden-best', String(best)); } catch (e) {} }
