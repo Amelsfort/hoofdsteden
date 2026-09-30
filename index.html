@@ -94,7 +94,6 @@ function logEvent(e, s) {
   fetch(LOG_URL + '?' + q, { mode: 'no-cors' }).catch(() => {});
 }
 logEvent('bezoek');
-
 </script>
 <script>
 (async function () {
@@ -348,12 +347,28 @@ function start() {
     ctx.fillText(best ? `Beste score: ${best} punten` : 'Wie haalt er 3 sterren?', 512, 460);
     Q.update();
   }
+  function drawPin(ctx, cx, cy) {
+    ctx.save();
+    ctx.fillStyle = '#ff6b6f';
+    ctx.beginPath(); ctx.arc(cx, cy - 20, 48, Math.PI, 0);
+    ctx.quadraticCurveTo(cx + 48, cy + 20, cx, cy + 66);
+    ctx.quadraticCurveTo(cx - 48, cy + 20, cx - 48, cy - 20);
+    ctx.fill();
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.stroke();
+    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(cx, cy - 20, 18, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
   function drawQuestion(fb) {
-    const { ctx, c } = Q, d = DATA[cur]; panelBg(ctx, c, 44);
-    drawFlag(ctx, d.flag, 60, 58, 210, 140);
+    const { ctx, c } = Q, d = DATA[cur], toLand = curDir === 'stad2land'; panelBg(ctx, c, 44);
+    // capital -> country: hide the flag until answered, it would give the answer away
+    if (toLand && !fb) drawPin(ctx, 165, 128);
+    else drawFlag(ctx, d.flag, 60, 58, 210, 140);
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = '#b8c7ea'; ctx.font = `700 46px ${FONT}`; ctx.fillText('Wat is de hoofdstad van', 312, 108);
-    ctx.fillStyle = '#ffcf40'; fit(ctx, d.land + '?', 1024 - 312 - 50, 100, 900); ctx.fillText(d.land + '?', 312, 196);
+    ctx.fillStyle = '#b8c7ea';
+    const ask = toLand ? 'Van welk land is dit de hoofdstad?' : 'Wat is de hoofdstad van';
+    fit(ctx, ask, 1024 - 312 - 50, 46, 700); ctx.fillText(ask, 312, 108);
+    const big = toLand ? d.stad : d.land + '?';
+    ctx.fillStyle = '#ffcf40'; fit(ctx, big, 1024 - 312 - 50, 100, 900); ctx.fillText(big, 312, 196);
     ctx.strokeStyle = 'rgba(160,200,255,0.3)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(60, 250); ctx.lineTo(964, 250); ctx.stroke();
     ctx.textAlign = 'center';
@@ -365,7 +380,7 @@ function start() {
       ctx.fillStyle = '#fff3c4'; ctx.font = `700 42px ${FONT}`;
       const h = (hints[d.flag] || '').trim();
       if (h) wrap(ctx, '💡 ' + h, 880).slice(0, 3).forEach((l, i) => ctx.fillText(l, 512, 400 + i * 52));
-      else { ctx.font = `800 54px ${FONT}`; ctx.fillText(`${d.land} → ${d.stad}`, 512, 430); }
+      else { ctx.font = `800 54px ${FONT}`; ctx.fillText(toLand ? `${d.stad} → ${d.land}` : `${d.land} → ${d.stad}`, 512, 430); }
     }
     Q.update();
   }
@@ -384,7 +399,7 @@ function start() {
   }
 
   // ---------- game logic ----------
-  let phase = 'start', queue = [], cur = -1, options = [], wrongOnce = new Set();
+  let phase = 'start', queue = [], cur = -1, curDir = 'land2stad', options = [], wrongOnce = new Set();
   let score = 0, streak = 0, solved = 0, firstRight = 0, locked = false, waitBtn = null;
   const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
@@ -396,7 +411,8 @@ function start() {
   }
   function newGame() {
     logEvent('spel-gestart');
-    queue = shuffle(DATA.map((_, i) => i)); wrongOnce = new Set();
+    // each country once, randomly asked as country -> capital or capital -> country
+    queue = shuffle(DATA.map((_, i) => ({ i, dir: Math.random() < 0.5 ? 'land2stad' : 'stad2land' }))); wrongOnce = new Set();
     score = 0; streak = 0; solved = 0; firstRight = 0; locked = false; waitBtn = null;
     phase = 'question'; startBtn.mesh.visible = false; S.mesh.visible = true;
     answerBtns.forEach(b => b.mesh.visible = true);
@@ -404,13 +420,14 @@ function start() {
   }
   function nextQuestion() {
     if (!queue.length) return endGame();
-    cur = queue.shift();
+    const item = queue.shift(); cur = item.i; curDir = item.dir;
     const others = shuffle(DATA.map((_, i) => i).filter(i => i !== cur)).slice(0, 3);
     options = shuffle([cur, ...others]);
-    answerBtns.forEach((b, i) => { b.enabled = true; b.draw(DATA[options[i]].stad, 'idle'); });
+    answerBtns.forEach((b, i) => { b.enabled = true; b.draw(label(options[i]), 'idle'); });
     locked = false; waitBtn = null;
     drawQuestion(null); drawScore();
   }
+  const label = i => curDir === 'stad2land' ? DATA[i].land : DATA[i].stad;
   function answer(btn) {
     if (phase !== 'question') return;
     if (waitBtn) { if (btn === waitBtn) { sfx('click'); nextQuestion(); } return; }
@@ -421,15 +438,15 @@ function start() {
       const first = !wrongOnce.has(cur);
       const gain = first ? 10 + Math.min(streak, 5) * 2 : 5;
       score += gain; streak++; solved++; if (first) firstRight++;
-      answerBtns.forEach(b => b.draw(DATA[options[b.index]].stad, b === btn ? 'good' : 'dim'));
+      answerBtns.forEach(b => b.draw(label(options[b.index]), b === btn ? 'good' : 'dim'));
       drawQuestion({ good: true, title: `Goed zo! 🎉  +${gain}` }); drawScore();
       sfx('good'); buzz(0.5, 80); burst(btn.mesh);
       setTimeout(nextQuestion, 1700);
     } else {
       streak = 0; wrongOnce.add(cur);
-      queue.splice(Math.min(2, queue.length), 0, cur); // comes back soon
-      answerBtns.forEach(b => b.draw(DATA[options[b.index]].stad, b === btn ? 'bad' : b === correctBtn ? 'good' : 'dim'));
-      drawQuestion({ good: false, title: `Het is ${DATA[cur].stad}! Kies de groene knop.` }); drawScore();
+      queue.splice(Math.min(2, queue.length), 0, { i: cur, dir: curDir }); // comes back soon, same kind of question
+      answerBtns.forEach(b => b.draw(label(options[b.index]), b === btn ? 'bad' : b === correctBtn ? 'good' : 'dim'));
+      drawQuestion({ good: false, title: `Het is ${label(cur)}! Kies de groene knop.` }); drawScore();
       sfx('bad'); buzz(0.9, 160);
       waitBtn = correctBtn; locked = false;
     }
@@ -553,7 +570,6 @@ function start() {
       note.textContent = 'Klik of tik op een antwoord om te spelen.';
     }
   }
-
   vrBtn.addEventListener('click', async () => {
     ensureAudio();
     if (session) { session.end(); return; }
