@@ -85,6 +85,11 @@ const HINTS = {
   'Litouwen':   'Ik WIL een NIEUW springTOUW!'
 };
 
+/* Hoeveel vragen per spel? (fout beantwoorde vragen komen daarna nog een keer terug,
+   die tellen niet extra mee). Bij 8 krijgt elk land één vraag; bij meer komen landen
+   vaker langs, bij minder wordt een willekeurig deel van de landen gevraagd. */
+const AANTAL_VRAGEN = 16;
+
 /* Welke soorten vragen komen in het spel? Haal een regel weg om die soort uit te zetten.
    Elke ronde krijgt elk land één vraag, met een willekeurige soort uit deze lijst. */
 const VRAAGSOORTEN = [
@@ -93,7 +98,6 @@ const VRAAGSOORTEN = [
   'kaart-land',            // "Tik op Noorwegen op de kaart"
   'kaart-hoofdstad'        // "Tik op de stip van Oslo op de kaart"
 ];
-
 const LOG_URL = 'https://script.google.com/macros/s/AKfycbzQQA4Fh8CGP-JxrDfwpjUjMMADu7jS3Eypvn-OzlAwT3FzzhBcJe6HltyDupt-fG22/exec';
 function logEvent(e, s) {
   if (!LOG_URL) return;
@@ -102,7 +106,8 @@ function logEvent(e, s) {
   const q = new URLSearchParams({ e, d, s: s == null ? '' : String(s) });
   fetch(LOG_URL + '?' + q, { mode: 'no-cors' }).catch(() => {});
 }
-logEvent('bezoek');</script>
+logEvent('bezoek');
+</script>
 <script>
 (async function () {
   try {
@@ -422,7 +427,7 @@ function start() {
   function drawScore() {
     const { ctx, c } = S; panelBg(ctx, c, 60);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#ffffff';
-    const txt = `⭐ ${score} punten     ✅ ${solved}/8     🔥 ${streak} op rij`;
+    const txt = `⭐ ${score} punten     ✅ ${solved}/${total}     🔥 ${streak} op rij`;
     fit(ctx, txt, c.width - 80, 58, 800); ctx.fillText(txt, c.width / 2, c.height / 2 + 2); S.update();
   }
 
@@ -481,11 +486,11 @@ function start() {
   }
   function drawEnd(newBest) {
     const { ctx, c } = Q; panelBg(ctx, c, 44);
-    const stars = firstRight === 8 ? 3 : firstRight >= 6 ? 2 : 1;
+    const stars = firstRight === total ? 3 : firstRight >= Math.ceil(total * 0.75) ? 2 : 1;
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#ffcf40'; ctx.font = `900 96px ${FONT}`; ctx.fillText('Klaar! 🎉', 512, 125);
     [362, 512, 662].forEach((x, i) => starShape(ctx, x, 215, 56, i < stars));
-    ctx.fillStyle = '#ffffff'; ctx.font = `800 52px ${FONT}`; ctx.fillText(`${firstRight} van 8 meteen goed`, 512, 345);
+    ctx.fillStyle = '#ffffff'; ctx.font = `800 52px ${FONT}`; ctx.fillText(`${firstRight} van ${total} meteen goed`, 512, 345);
     ctx.fillStyle = '#b8c7ea'; ctx.font = `700 42px ${FONT}`;
     ctx.fillText(newBest ? `${score} punten, nieuw record! 🏆` : `${score} punten (beste: ${best})`, 512, 412);
     ctx.fillStyle = '#dfe8ff'; ctx.font = `700 40px ${FONT}`;
@@ -494,7 +499,7 @@ function start() {
   }
 
   // ---------- game logic ----------
-  let phase = 'start', queue = [], cur = -1, curDir = 'land2stad', options = [], wrongOnce = new Set();
+  let phase = 'start', queue = [], cur = -1, curDir = 'land2stad', options = [], wrongOnce = new Set(), total = 8, curId = 0;
   let score = 0, streak = 0, solved = 0, firstRight = 0, locked = false, waitBtn = null;
   const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
@@ -507,14 +512,14 @@ function start() {
     P.mesh.visible = map; M.mesh.visible = map;
   }
   function scoreRight() {
-    const first = !wrongOnce.has(cur);
+    const first = !wrongOnce.has(curId);
     const gain = first ? 10 + Math.min(streak, 5) * 2 : 5;
     score += gain; streak++; solved++; if (first) firstRight++;
     return gain;
   }
   function scoreWrong() {
-    streak = 0; wrongOnce.add(cur);
-    queue.splice(Math.min(2, queue.length), 0, { i: cur, dir: curDir }); // comes back soon, same kind of question
+    streak = 0; wrongOnce.add(curId);
+    queue.splice(Math.min(2, queue.length), 0, { id: curId, i: cur, dir: curDir }); // comes back soon, same kind of question
   }
   function mapTap(uv, point) {
     if (phase !== 'question' || !isMapQ() || !uv) return;
@@ -551,14 +556,23 @@ function start() {
     // each country once, with a random question type from VRAAGSOORTEN
     const types = (Array.isArray(VRAAGSOORTEN) ? VRAAGSOORTEN : []).map(t => TYPE_MAP[t]).filter(Boolean);
     const pool = types.length ? types : ['land2stad'];
-    queue = shuffle(DATA.map((_, i) => ({ i, dir: pool[Math.floor(Math.random() * pool.length)] }))); wrongOnce = new Set();
+    total = Math.max(1, Math.min(50, Math.round(Number(AANTAL_VRAGEN) || 8)));
+    // countries in shuffled rounds of all 8, never the same country twice in a row
+    const order = [];
+    while (order.length < total) {
+      const round = shuffle(DATA.map((_, i) => i));
+      if (order.length && round[0] === order[order.length - 1]) round.push(round.shift());
+      order.push(...round);
+    }
+    queue = order.slice(0, total).map((i, id) => ({ id, i, dir: pool[Math.floor(Math.random() * pool.length)] }));
+    wrongOnce = new Set();
     score = 0; streak = 0; solved = 0; firstRight = 0; locked = false; waitBtn = null;
     phase = 'question'; startBtn.mesh.visible = false; S.mesh.visible = true;
     nextQuestion();
   }
   function nextQuestion() {
     if (!queue.length) return endGame();
-    const item = queue.shift(); cur = item.i; curDir = item.dir;
+    const item = queue.shift(); cur = item.i; curDir = item.dir; curId = item.id;
     locked = false; waitBtn = null; waitMap = false;
     if (isMapQ()) {
       setView('map'); mapState = { hover: null, good: null, bad: null };
@@ -601,7 +615,7 @@ function start() {
     setView('none');
     startBtn.mesh.visible = true; startBtn.draw('Nog een keer ▶', 'start');
     drawEnd(newBest); drawScore();
-    sfx('win'); if (firstRight >= 6) { burst(Q.mesh); setTimeout(() => burst(Q.mesh), 300); }
+    sfx('win'); if (firstRight >= Math.ceil(total * 0.75)) { burst(Q.mesh); setTimeout(() => burst(Q.mesh), 300); }
   }
 
   // ---------- sound ----------
@@ -733,8 +747,12 @@ function start() {
     const w = app.clientWidth, h = app.clientHeight;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    const a = camera.aspect;
-    camera.position.set(0, 1.7, a < 1.1 ? 0.9 + (1.1 / a - 1) * 2.6 : 0.9);
+    // fit the game panels (about 2.0 m wide, 2.25 m tall incl. margin) to the screen
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const distForHeight = (2.25 / 2) / tanHalf;
+    const distForWidth = (2.0 / 2) / (tanHalf * camera.aspect);
+    const dist = Math.max(distForHeight, distForWidth);
+    camera.position.set(0, 1.7, Z + dist);
     camera.lookAt(0, 1.72, Z);
     camera.updateProjectionMatrix();
   }
