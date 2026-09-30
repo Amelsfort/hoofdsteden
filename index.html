@@ -69,16 +69,10 @@
 <script>
 /* =====================================================================
    EZELSBRUGGETJES AANPASSEN
-   Optie 1 (makkelijkst): Google Sheet.
-     - Kolom A: land (bijv. Noorwegen), kolom B: ezelsbruggetje.
-     - Bestand > Delen > Publiceren op internet > kies het blad > CSV > Publiceren.
-     - Plak die link hieronder bij SHEET_CSV_URL.
-     Daarna pas je alles aan in de Sheet; de site hoeft niet meer aangepast.
-   Optie 2: vul ze hieronder in bij HINTS (wordt gebruikt als er geen Sheet is,
-     of als de Sheet niet geladen kan worden).
-   Een leeg ezelsbruggetje = het spel toont alleen "land → hoofdstad".
+   Vul hieronder per land een ezelsbruggetje in (max. ~110 tekens).
+   Leeg laten = het spel toont alleen "land → hoofdstad".
+   Gebruik je een apostrof, schrijf dan \' (bijv. 'Het \'s nachts koud').
    ===================================================================== */
-const SHEET_CSV_URL = '';
 const HINTS = {
   'Noorwegen':  '',
   'Zweden':     '',
@@ -639,7 +633,7 @@ function start() {
     renderer.render(scene, camera);
   });
 
-  // ---------- hints: inline config + optional Google Sheet ----------
+  // ---------- hints from the HINTS config at the top ----------
   const hints = {};
   const byLand = {};
   DATA.forEach(d => { byLand[d.land.toLowerCase()] = d.flag; });
@@ -649,30 +643,7 @@ function start() {
       if (f) hints[f] = String(map[k] || '').trim().slice(0, 110);
     });
   }
-  function parseCSV(text) {
-    const rows = []; let row = [], cell = '', q = false;
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (q) {
-        if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
-        else cell += ch;
-      } else if (ch === '"') q = true;
-      else if (ch === ',') { row.push(cell); cell = ''; }
-      else if (ch === '\n' || ch === '\r') {
-        if (ch === '\r' && text[i + 1] === '\n') i++;
-        row.push(cell); rows.push(row); row = []; cell = '';
-      } else cell += ch;
-    }
-    if (cell || row.length) { row.push(cell); rows.push(row); }
-    return rows;
-  }
   applyHints(typeof HINTS === 'object' && HINTS ? HINTS : {});
-  if (typeof SHEET_CSV_URL === 'string' && SHEET_CSV_URL.trim()) {
-    fetch(SHEET_CSV_URL.trim(), { cache: 'no-store' })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.text(); })
-      .then(t => { const m = {}; parseCSV(t).forEach(r => { if (r[0]) m[r[0]] = r[1] || ''; }); applyHints(m); })
-      .catch(() => {});
-  }
 
   showStart();
   setupVR();
