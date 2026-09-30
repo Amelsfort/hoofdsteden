@@ -83,6 +83,17 @@ const HINTS = {
   'Letland':    'LET op! RIJ GAuw weg!',
   'Litouwen':   'Ik WIL een NIEUW springTOUW!'
 };
+
+const LOG_URL = 'https://script.google.com/macros/s/AKfycbzQQA4Fh8CGP-JxrDfwpjUjMMADu7jS3Eypvn-OzlAwT3FzzhBcJe6HltyDupt-fG22/exec';
+function logEvent(e, s) {
+  if (!LOG_URL) return;
+  const ua = navigator.userAgent;
+  const d = /OculusBrowser|Quest/i.test(ua) ? 'Quest' : /Mobi|Android|iPhone|iPad/i.test(ua) ? 'Mobiel' : 'Computer';
+  const q = new URLSearchParams({ e, d, s: s == null ? '' : String(s) });
+  fetch(LOG_URL + '?' + q, { mode: 'no-cors' }).catch(() => {});
+}
+logEvent('bezoek');
+
 </script>
 <script>
 (async function () {
@@ -383,6 +394,7 @@ function start() {
     S.mesh.visible = false; drawStart();
   }
   function newGame() {
+    logEvent('spel-gestart');
     queue = shuffle(DATA.map((_, i) => i)); wrongOnce = new Set();
     score = 0; streak = 0; solved = 0; firstRight = 0; locked = false; waitBtn = null;
     phase = 'question'; startBtn.mesh.visible = false; S.mesh.visible = true;
@@ -422,6 +434,7 @@ function start() {
     }
   }
   function endGame() {
+    logEvent('spel-klaar', firstRight + '/8');
     phase = 'end';
     let newBest = false;
     if (score > best) { best = score; newBest = true; try { localStorage.setItem('hoofdsteden-best', String(best)); } catch (e) {} }
