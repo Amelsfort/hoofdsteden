@@ -539,15 +539,21 @@ function start() {
   // ---------- VR session ----------
   let session = null, needsPlace = false;
   async function setupVR() {
+    const ua = navigator.userAgent;
+    const isHeadset = /OculusBrowser|Quest|Pico|Wolvic/i.test(ua);
     let ok = false;
-    try { ok = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')); } catch (e) {}
+    if (isHeadset) {
+      try { ok = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')); } catch (e) {}
+    }
     if (ok) {
       vrBtn.hidden = false;
-      note.textContent = 'Zet de bril op en druk op "Speel in VR". Richt de straal op een antwoord en druk op de trekker.';
+      note.textContent = 'Druk op "Speel in VR". Richt de straal op een antwoord en druk op de trekker.';
     } else {
-      note.textContent = 'Je kunt hier spelen met muis of vinger. Open deze pagina in de browser van de Meta Quest om in VR te spelen.';
+      vrBtn.hidden = true;
+      note.textContent = 'Klik of tik op een antwoord om te spelen.';
     }
   }
+
   vrBtn.addEventListener('click', async () => {
     ensureAudio();
     if (session) { session.end(); return; }
