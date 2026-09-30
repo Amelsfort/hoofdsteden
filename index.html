@@ -681,10 +681,7 @@ function start() {
     c.userData = { line, dot, src: null };
     c.addEventListener('connected', e => { c.userData.src = e.data; });
     c.addEventListener('disconnected', () => { c.userData.src = null; dot.visible = false; });
-    c.addEventListener('select', () => {
-      ensureAudio(); lastSource = c.userData.src;
-      rayFromController(c); selectHit(hitFromRay());
-    });
+    c.addEventListener('select', () => throwSnowball(c));
     scene.add(c); controllers.push(c);
 
     const grip = renderer.xr.getControllerGrip(i);
@@ -698,6 +695,67 @@ function start() {
   }
   function buzz(intensity, ms) {
     try { const h = lastSource && lastSource.gamepad && lastSource.gamepad.hapticActuators; if (h && h[0]) h[0].pulse(intensity, ms); } catch (e) {}
+  }
+
+    // ---------- snowballs (VR only) ----------
+  const snowballs = [];
+  const ballGeo = new THREE.SphereGeometry(0.035, 16, 12);
+  const ballMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x334466 });
+  const puffGeo = new THREE.IcosahedronGeometry(0.018, 0);
+  const puffMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, fog: false });
+  // a snowball only answers the question that was showing when it was thrown
+  const stateKey = () => `${phase}|${curId}|${solved}|${queue.length}`;
+
+  function noiseBurst(dur, f0, f1, vol) {
+    if (!actx) return;
+    const len = Math.floor(actx.sampleRate * dur);
+    const buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf;
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    const t = actx.currentTime;
+    bp.frequency.setValueAtTime(f0, t); bp.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.2); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(bp).connect(g).connect(actx.destination); src.start(t); src.stop(t + dur + 0.02);
+  }
+  function snowPuff(point) {
+    for (let i = 0; i < 16; i++) {
+      const m = new THREE.Mesh(puffGeo, puffMat.clone());
+      m.position.copy(point);
+      m.userData.v = new THREE.Vector3((Math.random() - 0.5) * 1.6, Math.random() * 1.2, (Math.random() - 0.2) * 1.2);
+      m.userData.life = 0.7; scene.add(m); parts.push(m);
+    }
+  }
+  function throwSnowball(c) {
+    ensureAudio(); lastSource = c.userData.src;
+    rayFromController(c);
+    const hit = hitFromRay();
+    const from = raycaster.ray.origin.clone().addScaledVector(raycaster.ray.direction, 0.08);
+    const to = hit ? hit.point.clone() : raycaster.ray.origin.clone().addScaledVector(raycaster.ray.direction, 6);
+    const dist = from.distanceTo(to);
+    const ball = new THREE.Mesh(ballGeo, ballMat);
+    ball.position.copy(from); scene.add(ball);
+    snowballs.push({ ball, from, to, t: 0, dur: Math.max(0.18, dist / 7), arc: Math.min(0.35, dist * 0.08), hit, key: stateKey() });
+    noiseBurst(0.22, 900, 2500, 0.18); buzz(0.25, 30);
+  }
+  function updateSnowballs(dt) {
+    for (let i = snowballs.length - 1; i >= 0; i--) {
+      const s = snowballs[i];
+      s.t += dt / s.dur;
+      const k = Math.min(1, s.t);
+      s.ball.position.lerpVectors(s.from, s.to, k);
+      s.ball.position.y += 4 * s.arc * k * (1 - k);
+      s.ball.rotation.x += dt * 12;
+      if (k >= 1) {
+        scene.remove(s.ball); snowballs.splice(i, 1);
+        snowPuff(s.to);
+        if (s.hit) {
+          noiseBurst(0.14, 500, 180, 0.35);
+          if (s.key === stateKey()) selectHit(s.hit);
+        }
+      }
+    }
   }
 
   const mouse = new THREE.Vector2(); let mouseIn = false;
@@ -841,6 +899,7 @@ function start() {
     });
 
     renderer.render(scene, camera);
+    updateSnowballs(dt);
   });
 
   // ---------- hints from the HINTS config at the top ----------
